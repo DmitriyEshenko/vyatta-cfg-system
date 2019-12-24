@@ -261,7 +261,7 @@ my $hwaddr = $ARGV[1];
 
 my $predef_ifname = "";
 if ($ARGV[2]){
-    my $predef_ifname = $ARGV[2];
+    $predef_ifname = $ARGV[2];
 }
 
 lock_file;
