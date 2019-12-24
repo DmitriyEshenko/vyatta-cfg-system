@@ -137,7 +137,7 @@ sub logit {
 
 # Determine network name to use based on Vyatta config during boot
 sub coldplug {
-    my ($ifname, $hwaddr) = @_;
+    my ($ifname, $hwaddr, $predef_ifname) = @_;
 
     # at this time root directory is read-only so use log file instead
     mkdir ($UDEVLOG);
@@ -157,19 +157,25 @@ sub coldplug {
 
     # add already assigned names
     if (opendir(my $dir, $VYATTAUDEV)) {
-	foreach my $intf (grep { ! /^\./ } readdir($dir)) {
-	    if (open (my $f, '<', "$VYATTAUDEV/$intf")) {
-		my $hwid = <$f>;
-		close $f;
-		chomp $hwid;
+        foreach my $intf (grep { ! /^\./ } readdir($dir)) {
+            if (open (my $f, '<', "$VYATTAUDEV/$intf")) {
+                my $hwid = <$f>;
+                close $f;
+                chomp $hwid;
 
-		$interfaces->{$hwid} = $intf;
-	    }
-	}
+                $interfaces->{$hwid} = $intf;
+            }
+        }
     }
 
-    $newname = biosdevname($ifname);
-    logit($log, "biosdevname for $ifname returned '$newname'\n");
+    if ($predef_ifname) {
+        $newname = $predef_ifname;
+        logit($log, "predefined interface name for $ifname returned '$newname'\n");
+    }
+    else{
+        $newname = biosdevname($ifname);
+        logit($log, "biosdevname for $ifname returned '$newname'\n");
+    }
 
     unless (is_available($interfaces, $newname)) {
 	$newname = find_available($interfaces, $newname);
@@ -185,7 +191,7 @@ sub coldplug {
 
 # Determine name from active config
 sub hotplug {
-    my ($ifname, $hwaddr) = @_;
+    my ($ifname, $hwaddr, $predef_ifname) = @_;
 
     # real filesystem available use real logging
     openlog("vyatta-net-name", "", LOG_DAEMON);
@@ -196,26 +202,32 @@ sub hotplug {
 
     my $interfaces = {};
     foreach my $type ($cfg->listOrigNodes()) {
-	next unless ($type eq 'ethernet') || ($type eq 'wireless');
-	foreach my $intf ($cfg->listOrigNodes($type)) {
-	    my $hwid = $cfg->returnOrigValue("$type $intf hw-id");
-	    next unless $hwid;
-	    # TBD this could be a hash with name and path?
-	    $interfaces->{$hwid} = $intf;
-	}
+        next unless ($type eq 'ethernet') || ($type eq 'wireless');
+        foreach my $intf ($cfg->listOrigNodes($type)) {
+            my $hwid = $cfg->returnOrigValue("$type $intf hw-id");
+            next unless $hwid;
+            # TBD this could be a hash with name and path?
+            $interfaces->{$hwid} = $intf;
+        }
     }
 
     my $newname = $interfaces->{$hwaddr};
     if ($newname) {
-	syslog(LOG_DEBUG, "use hw-id %s in config mapped to '%s'", $hwaddr, $newname);
-	return $newname;
+	    syslog(LOG_DEBUG, "use hw-id %s in config mapped to '%s'", $hwaddr, $newname);
+	    return $newname;
     }
 
-    $newname = biosdevname($ifname);
-    syslog(LOG_DEBUG, "biosdevname for %s returned '%s'", $ifname, $newname);
+    if ($predef_ifname) {
+        $newname = $predef_ifname;
+        syslog(LOG_DEBUG, "predefined interface name for %s returned '%s'", $ifname, $newname);
+    }
+    else{
+        $newname = biosdevname($ifname);
+        syslog(LOG_DEBUG, "biosdevname for %s returned '%s'", $ifname, $newname);
+    }
 
     unless (is_available($interfaces, $newname)) {
-	$newname = find_available($interfaces, $newname);
+	    $newname = find_available($interfaces, $newname);
     }
 
     syslog(LOG_INFO, "new name for '%s' is '%s'", $ifname, $newname);
@@ -238,21 +250,26 @@ sub unlock_file {
     $LOCKF = undef;
 }
 
-# This script is called from udev with two arguments
+# This script is called from udev with two or three arguments
 # it outputs the new name (if any) to stdout
-if ($#ARGV != 1) {
+if ($#ARGV > 2 or $#ARGV < 1) {
     die "vyatta_net_name called with wrong args:" . join(' ', @ARGV) . "\n";
 }
 
 my $ifname = $ARGV[0];
 my $hwaddr = $ARGV[1];
 
+my $predef_ifname = "";
+if ($ARGV[2]){
+    my $predef_ifname = $ARGV[2];
+}
+
 lock_file;
 my $newname;
 if ( -d $VYATTACFG ) {
-    $newname = hotplug($ifname, $hwaddr);
+    $newname = hotplug($ifname, $hwaddr, $predef_ifname);
 } else {
-    $newname = coldplug($ifname, $hwaddr);
+    $newname = coldplug($ifname, $hwaddr, $predef_ifname);
 }
 unlock_file;
 
